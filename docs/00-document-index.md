@@ -28,6 +28,7 @@
 17. `12-operations-design.md`
 18. `13-deployment-readiness.md`
 19. `14-security-privacy.md`
+20. `17-business-workflow.md`
 
 ## 문서 맵
 
@@ -51,6 +52,7 @@
 - 운영 설계: `12-operations-design.md`
 - 배포 체크리스트: `13-deployment-readiness.md`
 - 보안/개인정보: `14-security-privacy.md`
+- 업무 순서 설계: `17-business-workflow.md`
 
 ## 검토 포인트
 
