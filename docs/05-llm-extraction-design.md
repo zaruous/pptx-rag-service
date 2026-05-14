@@ -114,21 +114,48 @@ LLM 입력은 반드시 `slide IR` 형태로 고정한다.
 - 불명확하면 `uncertainties`에 명시할 것
 - `stepNo`는 추정 순서가 아니라 근거 기반 순서만 반환할 것
 - `facts`는 검색 가능한 짧은 문장으로 반환할 것
+- **출력 언어는 입력 문서의 언어와 일치**시켜야 한다. `detectedLanguage`를 따른다.
+
+### 다국어 System Prompt 선택
+
+```
+detectedLanguage = 'ko' → 한국어 프롬프트
+detectedLanguage = 'en' → 영어 프롬프트
+detectedLanguage = 'ja' → 일본어 프롬프트
+detectedLanguage = 'mixed' → 원문 언어 유지 프롬프트
+```
+
+각 언어의 system prompt 핵심 지시:
+- ko: `"모든 출력을 한국어로 작성하세요. 원문에 없는 내용을 생성하지 마세요."`
+- en: `"Write all output in English. Do not generate content not present in the source."`
+- 혼합: `"원문의 각 텍스트 언어를 그대로 유지하세요. 번역하지 마세요."`
 
 ### Extraction Prompt 패턴
 
-1. 슬라이드 유형 추정
-2. 요약 생성
+1. 슬라이드 유형 추정 (`workflowSignals` 포함 여부도 힌트로 사용)
+2. 요약 생성 (문서 언어로)
 3. facts 생성
-4. 프로세스라면 workflow 생성
+4. **워크플로 신호가 있거나 유형이 WORKFLOW이면:** 맥락 추론 포함 workflow 생성
 5. confidence와 uncertainties 출력
+
+### 워크플로 맥락 추론 지시 (추가)
+
+```
+WORKFLOW 유형 또는 workflowSignals 존재 시 추가 지시:
+"워크플로 단계를 추출할 때 다음을 반드시 포함하세요:
+ - 각 단계의 선행 조건과 완료 조건
+ - 담당 주체(actor)가 명시되지 않아도 문맥에서 추론 가능하면 표기 (uncertainties에 명시)
+ - 예외 흐름(실패, 반려, 루프백)
+ - 멀티페이지 연속 가능성이 있으면 continuedFrom/continuedTo 표시"
+```
 
 ### 금지 규칙
 
 - 숫자 상상 금지
-- actor 없는 step에 actor 임의 대입 금지
+- actor 없는 step에 actor 임의 대입 금지 (단, 문맥 추론은 uncertainties에 명시 후 허용)
 - 화살표 방향이 불명확하면 edge 생성 보류
 - 제목만 보고 전체 의미 단정 금지
+- **원문이 한국어인데 영어로 출력하는 것 금지 (언어 일관성)**
 
 ## 2단계 추출 전략
 

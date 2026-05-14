@@ -6,12 +6,13 @@ PPTX / PDF / DOCX 등 다양한 포맷의 문서로부터 RAG의 기준 데이�
 포맷에 상관없이 동일한 파이프라인이 작동하도록 `DocumentParser` 인터페이스로 추상화한다.  
 포맷별 추출 능력 차이와 한계는 `ParseFlags`와 `ParseQuality`로 명시하고 LLM 보강·검수 큐로 대응한다.  
 포맷별 상세 추출 능력 매트릭스와 파서 클래스 설계는 `20-document-format-support.md` 참고.  
-추출 결과 디버깅은 `21-extraction-debug-preview.md` 참고.
+추출 결과 디버깅은 `21-extraction-debug-preview.md` 참고.  
+다국어 지원 및 워크플로 맥락 추론 세부 전략은 `23-multilingual-workflow-context.md` 참고.
 
 특히 다음 두 종류를 구분한다.
 
 - 일반 정보형 페이지: 개념, 설명, 표, 비교, 수치
-- 프로세스형 페이지: 워킹 프로세스, 승인 흐름, 부서 handoff, 예외 분기
+- 프로세스형 페이지: 워킹 프로세스, 승인 흐름, 부서 handoff, 예외 분기 **← PPTX뿐 아니라 PDF·DOCX에서도 추론**
 
 ## 핵심 원칙
 
@@ -19,8 +20,10 @@ PPTX / PDF / DOCX 등 다양한 포맷의 문서로부터 RAG의 기준 데이�
 2. 파이프라인 나머지 단계(IR 생성, LLM 추출, Chunk 조립)는 포맷을 모른다.
 3. LLM 출력은 자유 문장보다 `JSON schema` 기반 구조화 출력을 우선한다.
 4. 원문 계층과 의미 계층을 같이 저장한다.
-5. 프로세스 페이지는 `요약`만으로 끝내지 않고 `graph`를 뽑아야 한다.
+5. 프로세스 페이지는 `요약`만으로 끝내지 않고 `graph`를 뽑아야 한다. 이미지 기반 플로차트는 멀티모달 LLM으로 추론한다.
 6. 추출 결과는 마크다운 디버그 뷰로 언제든 확인할 수 있어야 한다 (`/debug/preview`).
+7. 문서 언어를 자동 감지하고, 언어별 OCR 모델과 LLM 프롬프트를 선택한다.
+8. 임베딩은 `bge-m3`로 단일화해 교차 언어 검색(한국어 쿼리 → 영어 문서)을 지원한다.
 
 ## 단계별 파이프라인
 
@@ -72,13 +75,36 @@ PPTX / PDF / DOCX 등 다양한 포맷의 문서로부터 RAG의 기준 데이�
 
 문서 전체 `page_count`와 `ParseQuality`는 파서 반환 즉시 RDB에 저장한다.
 
+### 1-A. Language Detection
+
+파싱과 동시에 언어를 감지한다.
+
+- `LanguageDetector` (fastText LID.176) → 문서 주 언어 + confidence
+- confidence < 0.85 → 페이지별 재감지 (혼합 문서)
+- 감지 결과를 `PageParseResult.detectedLanguage`에 저장
+- `MultilingualOcrRouter`가 언어별 최적 OCR 모델 선택
+
 ### 2. Visual Enrichment
 
 텍스트가 적거나 이미지 중심인 슬라이드에만 선택적으로 적용한다.
 
-- OCR
+- 언어별 OCR 모델 선택 (PaddleOCR v4 CJK / Surya 영문 / Tesseract 보조)
 - 썸네일 생성
-- 필요 시 멀티모달 LLM
+- **워크플로 다이어그램 감지:** DocLayout-YOLO로 `figure` 블록 식별 후 멀티모달 LLM 호출
+- 필요 시 멀티모달 LLM 페이지 전체 해석
+
+### 2-A. Workflow Signal Detection
+
+Visual Enrichment와 병렬로, 텍스트 신호 기반 워크플로 감지를 수행한다.
+
+`WorkflowSignalDetector`가 다음 신호를 탐지:
+- 번호 패턴 (`1단계`, `Step 1`, `Phase 1`)
+- 화살표 문자 (`→`, `▶`, `=>`)
+- 순서 접속사 (`이후`, `다음으로`, `then`, `after`, `upon completion`)
+- 담당자 패턴 (`담당: OOO`, `Responsible: `)
+- Swimlane 표 (열 = actor, 행 = 단계)
+
+감지 결과는 `PageParseResult.workflowSignals`에 저장되어 LLM 추출 단계에서 활용된다.
 
 ### 3. Intermediate Representation 생성
 
@@ -89,6 +115,8 @@ PPTX / PDF / DOCX 등 다양한 포맷의 문서로부터 RAG의 기준 데이�
 - PDF의 `TABLE_APPROXIMATE` 플래그가 있으면 IR의 `tableTexts`에 `[근사 추출]` 마킹
 - `SCAN_DETECTED`이면 IR의 `bodyTexts` 대부분이 `ocrTexts`에서 온다고 표시
 - DOCX의 섹션 기반 페이지는 `pageNo`를 섹션 순번으로 채움
+- `workflowSignals`가 있으면 IR에 `visualTypeCandidates`에 `WORKFLOW` 추가
+- `detectedLanguage`를 IR에 전달해 LLM 프롬프트 언어 선택에 사용
 
 ### 4. LLM Semantic Extraction
 

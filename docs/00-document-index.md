@@ -26,7 +26,8 @@
 11. `20-document-format-support.md`
 12. `21-extraction-debug-preview.md`
 13. `22-document-md-conversion-strategy.md`
-11. `db-design/`
+14. `23-multilingual-workflow-context.md`
+15. `db-design/`
 12. `06-erd.md`
 13. `api-design/`
 14. `08-functional-requirements.md`
@@ -54,6 +55,7 @@
 - 문서 포맷 지원 (PPTX/PDF/DOCX): `20-document-format-support.md`
 - 추출 결과 디버그 미리보기: `21-extraction-debug-preview.md`
 - 논문 수준 MD 변환 전략·라이브러리·하드웨어: `22-document-md-conversion-strategy.md`
+- 다국어 지원 및 워크플로 맥락 추론: `23-multilingual-workflow-context.md`
 - 화면 설계: `screen-design/`
 - 데이터 설계: `db-design/`
 - ERD: `06-erd.md`
@@ -82,3 +84,6 @@
 - 구현 직전으로 가려면 `schema`, `query classification`, `no-answer`, `human review` 정책이 먼저 고정되어야 한다.
 - 응답 포맷에는 반드시 `document_name`, `slide_no`, `snippet`, `score`, `categories`를 포함해야 한다.
 - 메인 대시보드는 카테고리 분포, 적재 추이, 인덱싱 상태, 최근 업로드를 인포그래픽으로 제공한다.
+- 다국어 지원은 fastText LID.176 언어 감지 → 언어별 OCR 라우팅 → bge-m3 크로스링궐 임베딩으로 이어지는 파이프라인으로 설계한다.
+- 워크플로 맥락 추론은 PPTX SmartArt, PDF/DOCX 텍스트 패턴, 비전 LLM 3단계로 지원하며 멀티페이지 병합도 포함한다.
+- LLM 출력 언어는 반드시 입력 문서의 언어와 일치시켜야 하며, `detectedLanguage`를 기준으로 시스템 프롬프트를 선택한다.

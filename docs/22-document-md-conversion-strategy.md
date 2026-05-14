@@ -418,7 +418,153 @@ A4 10페이지 논문(혼합 텍스트+표+수식, 스캔 아님) 기준:
 
 ---
 
-## 10. 권장 구현 조합 (실용 기준)
+## 10. 다국어 문서 변환 전략
+
+PDF/PPTX/DOCX는 단일 언어뿐 아니라 다국어 혼합 문서도 빈번하다.  
+변환 파이프라인이 언어를 무시하면 OCR 오인식, 읽기 순서 오류, 잘못된 청킹이 발생한다.
+
+### 10-1. 언어 감지 단계
+
+```text
+[원본 문서]
+     │
+     ▼
+┌─────────────────────────────────────┐
+│ Pre-process: Language Detection     │
+│  - 선택형 텍스트 샘플 추출          │
+│  - fastText LID.176 모델 적용       │
+│  - 신뢰도 0.85 미만 → 혼합 처리    │
+└─────────────────────────────────────┘
+     │
+     ├── 단일 언어 (ko / en / ja / zh / ...) → 언어 전용 경로
+     └── 혼합 언어 (mixed) → 페이지/블록 단위 재감지
+```
+
+- **fastText LID.176**: 176개 언어 지원, 단일 모델, 오프라인 동작
+- 스캔 PDF는 OCR 이전에 언어 감지가 불가 → 페이지 이미지에서 문자 특성(Unicode 분포)으로 CJK 여부 판정
+
+### 10-2. 언어별 OCR 라우팅
+
+| 감지 언어 | 1순위 OCR | 2순위 OCR | 특이사항 |
+|---|---|---|---|
+| **ko** (한국어) | PaddleOCR `korean` | Surya | 한영 혼합 빈번, 두 엔진 병행 권장 |
+| **en** (영어) | Surya | Tesseract `eng` | 수식 있으면 GOT-OCR 추가 |
+| **ja** (일본어) | PaddleOCR `japan` | EasyOCR `ja` | 히라가나/가타카나/한자 혼합 |
+| **zh** (중국어 간체/번체) | PaddleOCR `ch` | EasyOCR `ch_sim` | 세로쓰기 감지 필요 |
+| **mixed** | 페이지별 재감지 | Surya (다국어) | 블록 단위 confidence 비교 |
+
+```python
+class MultilingualOcrRouter:
+    def route(self, page_image: Image, detected_lang: str) -> OcrResult:
+        if detected_lang == "ko":
+            result = self.paddle_ocr.run(page_image, lang="korean")
+            if result.confidence < 0.75:
+                result = self.surya_ocr.run(page_image)  # fallback
+        elif detected_lang in ("ja", "zh"):
+            result = self.paddle_ocr.run(page_image, lang=detected_lang)
+        else:
+            result = self.surya_ocr.run(page_image)
+        return result
+```
+
+### 10-3. CJK 특수 처리
+
+| 문제 | 한국어 | 일본어 | 중국어 |
+|---|---|---|---|
+| 인코딩 | EUC-KR / UTF-8 혼합 PDF | Shift-JIS 레거시 | GBK / UTF-8 |
+| 세로쓰기 | 드묾 | 빈번 | 빈번 |
+| 단어 경계 | 띄어쓰기 있음 | 없음 (형태소 분석 필요) | 없음 |
+| 수식 혼합 | GOT-OCR 2.0 | GOT-OCR 2.0 | GOT-OCR 2.0 |
+| 한자 처리 | 한국 한자 OCR | 일본 한자 OCR | 중국 한자 OCR |
+
+**CJK PDF 인코딩 처리:**
+```python
+# pdfminer.six를 통한 CID 폰트 매핑
+from pdfminer.high_level import extract_text
+from pdfminer.layout import LAParams
+
+laparams = LAParams(
+    detect_vertical=True,   # 세로쓰기 감지
+    all_texts=True
+)
+text = extract_text(pdf_path, laparams=laparams, codec='utf-8')
+```
+
+### 10-4. 혼합 언어 문서 처리
+
+```text
+[혼합 언어 페이지]
+     │
+     ▼
+블록 단위 언어 감지 (각 텍스트 블록에 fastText 적용)
+     │
+     ├── 블록 A: ko → PaddleOCR korean
+     ├── 블록 B: en → Surya
+     ├── 블록 C: formula → GOT-OCR 2.0
+     └── 블록 D: ko+en 혼합 → PaddleOCR ko + 신뢰도 필터
+     │
+     ▼
+블록별 OCR 결과 병합 → 읽기 순서 재구성 → Markdown 조립
+```
+
+**Markdown 출력 언어 정책:**
+- 원문 텍스트 언어를 그대로 유지 (번역 없음)
+- 메타데이터(제목, 캡션 레이블)도 원문 언어 유지
+- `detectedLanguage` 필드에 주 언어 코드 기록
+- 혼합 비율 `languageMix: {ko: 0.7, en: 0.3}` 기록
+
+### 10-5. 언어별 Markdown 후처리
+
+| 언어 | 주의사항 |
+|---|---|
+| 한국어 | 조사 분리로 인한 줄바꿈 오류 보정; 한글 headings 유지 |
+| 일본어 | 형태소 경계에서의 줄바꿈 보정; 세로쓰기→가로쓰기 변환 표시 |
+| 중국어 | 단어 경계 없는 긴 줄 처리; 간체/번체 혼용 표시 |
+| 한영 혼합 | 영문 단어 중간 줄바꿈 방지; 코드 블록은 `code fence` |
+
+### 10-6. 크로스 링궐 검색을 위한 임베딩 준비
+
+변환된 Markdown은 bge-m3 임베딩 전에 언어별 청킹 조정이 필요하다:
+
+```text
+언어별 토큰 밀도 차이:
+  - 한국어: 평균 1.5 토큰/문자 (형태소 분리)
+  - 영어:   평균 0.3 토큰/단어
+  - 중국어: 평균 1.0 토큰/문자
+
+권장 청킹 전략:
+  - 한국어 문서: 문장 단위 청킹, 최대 512 bge-m3 토큰
+  - 영어 문서:   단락 단위 청킹, 최대 512 토큰
+  - 혼합 문서:   의미 단위 우선, 언어 경계에서 청크 분리
+```
+
+### 10-7. 다국어 파싱 서비스 API 확장
+
+```python
+POST /parse
+{
+  "file": <binary>,
+  "targetLevel": "L3",
+  "language": "auto",          # "auto" | "ko" | "en" | "ja" | "zh" | "mixed"
+  "enableOcr": true,
+  "enableMultilingualOcr": true,  # 블록별 언어 재감지
+  "preserveOriginalLanguage": true,  # 번역 없이 원문 언어 유지
+  "cjkVerticalTextDetection": true   # CJK 세로쓰기 감지
+}
+
+Response:
+{
+  "markdown": "...",
+  "detectedLanguage": "ko",
+  "languageMix": {"ko": 0.85, "en": 0.15},
+  "quality": { ... },
+  "perPageLanguage": ["ko", "ko", "en", "ko", "mixed"]
+}
+```
+
+---
+
+## 11. 권장 구현 조합 (실용 기준)
 
 ### 비즈니스 문서 (일반 보고서, PPT)
 
@@ -458,7 +604,7 @@ Level: L2
 
 ---
 
-## 11. 시스템 통합 API
+## 12. 시스템 통합 API
 
 파이프라인을 서비스로 노출하는 표준 인터페이스:
 
@@ -495,7 +641,7 @@ Response:
 
 ---
 
-## 12. 설치 의존성 요약
+## 13. 설치 의존성 요약
 
 ```bash
 # Python 핵심
