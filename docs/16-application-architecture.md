@@ -134,21 +134,26 @@ ingestion
 
 ### 오케스트레이션 단계
 
-1. 파일 저장 확인
-2. slide parsing
-3. slide IR 생성
-4. semantic extraction
-5. chunk assembly
-6. embedding
-7. Chroma upsert
-8. review candidate 생성
-9. job 완료/실패 기록
+1. 파일 저장 확인 + 포맷 감지 (`DocumentFormatDetector`)
+2. `DocumentParserRegistry` → 포맷에 맞는 파서 선택
+3. `DocumentParser.parse()` → `DocumentParseResult` (페이지 목록)
+4. 디버그 JSON 저장 (설정에 따라)
+5. `SlideIrBuilder` → `PageParseResult` → `SlideIr` 변환
+6. semantic extraction (LLM)
+7. 문서 단위 요약 + 카테고리 추천
+8. chunk assembly (DOC_META 포함)
+9. embedding (bge-m3)
+10. Chroma upsert
+11. review candidate 생성
+12. job 완료/실패 기록
 
 ## 4. `extraction`
 
 ### 책임
 
-- PPTX에서 기준 데이터를 추출하고 의미 구조화 결과를 만든다.
+- PPTX / PDF / DOCX 등 다양한 포맷에서 기준 데이터를 추출하고 의미 구조화 결과를 만든다.
+- `DocumentParser` 인터페이스를 통해 포맷별 파서를 교체 가능하게 유지한다.
+- 추출 결과를 마크다운 디버그 뷰로 제공한다.
 
 ### 주요 하위 구성
 
@@ -157,6 +162,17 @@ extraction
 ├─ application
 ├─ domain
 ├─ parser
+│   ├─ DocumentParser.java         (interface)
+│   ├─ AbstractDocumentParser.java (abstract)
+│   ├─ DocumentParserRegistry.java
+│   ├─ DocumentFormatDetector.java
+│   ├─ pptx/PptxDocumentParser.java
+│   ├─ pdf/PdfDocumentParser.java
+│   ├─ pdf/PdfScanDetector.java
+│   ├─ docx/DocxDocumentParser.java
+│   └─ docx/DocxPageSplitter.java
+├─ debug
+│   └─ DebugPreviewRenderer.java   (PageParseResult → Markdown)
 ├─ semantic
 ├─ workflow
 └─ chunking
@@ -164,18 +180,24 @@ extraction
 
 ### 세부 책임 분리
 
-- `parser`: Apache POI 기반 원천 추출
-- `semantic`: LLM 입력/출력 처리
-- `workflow`: 프로세스형 슬라이드 전용 규칙
-- `chunking`: raw/summary/fact/workflow chunk 조립
+- `parser`: 포맷별 파서 구현 + 레지스트리. 출력은 항상 `DocumentParseResult`
+- `debug`: `PageParseResult`를 마크다운으로 렌더링, `/debug/preview` API 지원
+- `semantic`: LLM 입력/출력 처리 (SlideIr 기반, 포맷 무관)
+- `workflow`: 프로세스형 페이지 전용 규칙
+- `chunking`: raw/summary/fact/workflow/doc_meta chunk 조립
 
 ### 핵심 서비스
 
+- `DocumentFormatDetector`
+- `DocumentParserRegistry`
+- `PptxDocumentParser`, `PdfDocumentParser`, `DocxDocumentParser`
 - `SlideIrBuilder`
 - `SlideTypeClassifier`
 - `SemanticExtractionService`
+- `DocumentSemanticExtractor`
 - `WorkflowNormalizationService`
 - `ChunkAssemblyService`
+- `DebugPreviewRenderer`
 
 ## 5. `retrieval`
 
@@ -283,7 +305,8 @@ integration
 ├─ chroma
 ├─ embedding        # bge-m3 어댑터
 ├─ llm
-├─ ocr
+├─ ocr              # Tesseract / 외부 OCR API 어댑터
+├─ libreoffice      # DOCX 실제 페이지 분할 (선택)
 └─ storage
 ```
 
@@ -304,17 +327,19 @@ integration
 
 ### Outbound Ports 예시
 
-- `SlideParserPort`
+- `DocumentParserPort` (포맷별 파서 어댑터)
 - `OcrPort`
 - `SemanticExtractorPort`
 - `EmbeddingPort`
 - `VectorStorePort`
 - `FileStoragePort`
+- `PageRenderPort` (DOCX 페이지 분할용 LibreOffice 어댑터)
 
 ### Inbound Ports 예시
 
 - `UploadDocumentUseCase`
 - `RunQueryUseCase`
+- `GetDebugPreviewUseCase`
 - `ReviewSlideUseCase`
 - `ReingestSlideUseCase`
 
@@ -472,10 +497,14 @@ web/
 
 | Method | Path | 설명 |
 |---|---|---|
-| `POST` | `/api/documents` | PPTX 업로드 + 카테고리 |
-| `GET` | `/api/documents` | 카테고리/상태 필터 목록 |
+| `POST` | `/api/documents` | 문서 업로드 (PPTX/PDF/DOCX) + 카테고리 |
+| `GET` | `/api/documents` | 카테고리/상태/포맷 필터 목록 |
 | `GET` | `/api/documents/{id}` | 문서 상세 |
 | `POST` | `/api/documents/{id}/reprocess` | 재처리 트리거 |
+| `GET` | `/api/documents/{versionId}/debug/preview` | 추출 결과 디버그 뷰 (JSON) |
+| `GET` | `/api/documents/{versionId}/debug/preview/{pageNo}/markdown` | 페이지 마크다운 미리보기 |
+| `GET` | `/api/documents/{versionId}/debug/preview/markdown` | 전체 MD 다운로드 |
+| `GET` | `/api/documents/{versionId}/debug/chunks` | Chunk 텍스트/토큰 목록 |
 | `GET` | `/api/taxonomy` | 카테고리 마스터 조회 |
 | `POST` | `/api/taxonomy` | 카테고리 추가 (관리자) |
 | `POST` | `/api/query` | 자연어 질의 |
@@ -488,7 +517,7 @@ web/
 
 ## Spring 주요 설정
 
-- `spring.servlet.multipart.max-file-size` PPTX 한도
+- `spring.servlet.multipart.max-file-size` 문서 업로드 한도 (기본 100MB)
 - `spring.task.execution.pool.*` ingestion 비동기 실행기
 - `app.embedding.model=bge-m3`, `app.embedding.dim=1024`, `app.embedding.distance=cosine`
 - `app.chroma.collections.docMeta=doc_meta`, `app.chroma.collections.slideChunks=slide_chunks`

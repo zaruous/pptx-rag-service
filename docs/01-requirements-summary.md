@@ -20,10 +20,13 @@
 
 ## 범위
 
-- PPTX 업로드 및 버전 관리
+- PPTX / PDF / DOCX 업로드 및 버전 관리 (추후 HWP 등 확장 가능)
 - 업로드 시 카테고리(`기능 / 업종 / 유형`) 지정 및 관리
-- 슬라이드 단위 파싱
+- 포맷별 파서 인터페이스(`DocumentParser`)를 통한 확장 가능한 파싱 아키텍처
+- 슬라이드/페이지 단위 파싱
 - 텍스트, 표, 도형 텍스트, 노트, 이미지 OCR 결과 수집
+- 포맷별 추출 한계(`ParseFlags`, `ParseQuality`) 명시 및 LLM 보강
+- 추출 결과 마크다운 디버그 미리보기 제공
 - 슬라이드 요약 생성
 - 문서 단위 메타 chunk(파일명, 페이지 수, 요약, 카테고리) 생성 및 임베딩
 - 워킹 프로세스/업무 흐름 구조 추출
@@ -60,7 +63,9 @@
 | 클라이언트 | React + Vite | SPA 빠른 빌드, HMR, 인포그래픽 컴포넌트 풍부 |
 | 벡터 DB | Chroma | 메타데이터 필터와 간단한 운영에 적합 |
 | 운영 메타데이터 | PostgreSQL (초기 H2) | 문서/잡/버전/카테고리 상태를 Chroma와 분리 |
-| 파싱 | Apache POI | PPTX 구조 접근에 적합 |
+| 파싱 (PPTX) | Apache POI XSLF | PPTX 구조 접근에 적합 |
+| 파싱 (PDF) | Apache PDFBox 3.x | 텍스트/이미지 추출, 스캔 PDF OCR 연계 |
+| 파싱 (DOCX) | Apache POI XWPF | DOCX 구조 접근에 적합 |
 | OCR | Tesseract 또는 외부 OCR API | 이미지 기반 인포그래픽 보강 |
 | 임베딩 | `BAAI/bge-m3` | 한국어/영어 혼합 RAG에 우수, 다국어 단일 모델 |
 | LLM | 사내 표준 또는 외부 API | 슬라이드/문서 의미 추출, 카테고리 정규화 |

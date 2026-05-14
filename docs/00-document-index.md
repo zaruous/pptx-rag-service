@@ -23,6 +23,8 @@
 8. `16-application-architecture.md`
 9. `18-category-taxonomy.md`
 10. `19-dashboard-design.md`
+11. `20-document-format-support.md`
+12. `21-extraction-debug-preview.md`
 11. `db-design/`
 12. `06-erd.md`
 13. `api-design/`
@@ -48,6 +50,8 @@
 - 애플리케이션 아키텍처: `16-application-architecture.md`
 - 카테고리 분류 체계: `18-category-taxonomy.md`
 - 대시보드 인포그래픽 설계: `19-dashboard-design.md`
+- 문서 포맷 지원 (PPTX/PDF/DOCX): `20-document-format-support.md`
+- 추출 결과 디버그 미리보기: `21-extraction-debug-preview.md`
 - 화면 설계: `screen-design/`
 - 데이터 설계: `db-design/`
 - ERD: `06-erd.md`
@@ -69,6 +73,9 @@
 - 워킹 프로세스 슬라이드는 `workflow graph` 형태의 구조 추출을 별도로 가져가야 한다.
 - 카테고리 (`function / industry / docType`)는 업로드 단계에서 사용자가 선택하고, 문서 메타 chunk(파일명·페이지수·요약·카테고리)도 함께 임베딩한다.
 - 임베딩 모델은 `bge-m3`로 고정하여 한국어/영어 혼합 검색 품질을 우선 확보한다.
+- 문서 포맷은 PPTX / PDF / DOCX를 지원하며, 파서 인터페이스(`DocumentParser`)로 추후 HWP 등 확장이 가능하다.
+- 스캔 PDF·이미지 전용 슬라이드 등 포맷별 추출 한계는 `ParseFlags`/`ParseQuality`로 명시하고 LLM 보강·검수로 대응한다.
+- 추출 결과는 `/debug/preview` API에서 마크다운으로 확인 가능해야 한다.
 - 추출 품질은 주관적 판단이 아니라 `field accuracy`, `retrieval hit`, `grounded answer rate`로 계량해야 한다.
 - 구현 직전으로 가려면 `schema`, `query classification`, `no-answer`, `human review` 정책이 먼저 고정되어야 한다.
 - 응답 포맷에는 반드시 `document_name`, `slide_no`, `snippet`, `score`, `categories`를 포함해야 한다.

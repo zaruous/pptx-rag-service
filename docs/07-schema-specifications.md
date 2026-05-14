@@ -26,6 +26,13 @@
 
 ### 공통 Enum
 
+#### DocumentFormat
+
+- `PPTX`
+- `PDF`
+- `DOCX`
+- `UNKNOWN`
+
 #### SlideType
 
 - `TEXT_HEAVY`
@@ -376,3 +383,90 @@ Chroma 적재 전 최종 청크 공통 포맷
 | `categoryDocTypeLabel` | `string` | N | 문서 유형 라벨 |
 | `composedText` | `string` | Y | 임베딩 입력으로 합성된 텍스트 |
 | `embeddingModel` | `string` | Y | `bge-m3` |
+
+## 13. Document Parse Result Schema
+
+### 목적
+
+`DocumentParser` 출력의 공통 포맷. 포맷별 파서가 동일한 구조로 반환한다.
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `documentVersionId` | `string` | Y | 버전 ID |
+| `format` | `DocumentFormat` | Y | 문서 포맷 |
+| `pageCount` | `integer` | Y | 총 페이지 수 |
+| `pages` | `PageParseResult[]` | Y | 페이지별 파싱 결과 |
+| `parserMeta` | `ParserMeta` | Y | 파서 이름/버전 |
+| `quality` | `ParseQuality` | Y | 파싱 품질 |
+
+### PageParseResult
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `pageNo` | `integer` | Y | 1-based 페이지 번호 |
+| `pageTitle` | `string` | N | 페이지 제목 또는 헤딩 |
+| `bodyTexts` | `string[]` | Y | 본문 텍스트 목록 |
+| `shapeTexts` | `string[]` | Y | 도형/SmartArt 텍스트 (PPTX 전용, 타 포맷 빈 배열) |
+| `tables` | `TableParseResult[]` | Y | 표 목록 |
+| `chartTexts` | `string[]` | Y | 차트 라벨 텍스트 |
+| `notes` | `string` | N | 발표자 노트 (PPTX 전용) |
+| `imageRegions` | `ImageRegion[]` | Y | 이미지 영역 메타데이터 |
+| `layoutHints` | `LayoutHint[]` | Y | 좌표/순서 정보 |
+| `ocrTexts` | `string[]` | Y | OCR 결과 |
+| `hyperlinks` | `string[]` | Y | 하이퍼링크 URL |
+| `flags` | `ParseFlags` | Y | 파싱 경고 플래그 |
+
+### ParseFlags
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `scanDetected` | `boolean` | 텍스트가 거의 없어 스캔본으로 판단 |
+| `tableApproximate` | `boolean` | 표 구조 근사 처리 (PDF 한계) |
+| `headingHeuristic` | `boolean` | 제목이 스타일 아닌 폰트 크기 휴리스틱으로 추정 |
+| `ocrApplied` | `boolean` | OCR 처리됨 |
+| `multimodalApplied` | `boolean` | 멀티모달 LLM 보강 처리됨 |
+| `partialParseFailed` | `boolean` | 일부 요소 파싱 실패 |
+| `failedPageNos` | `integer[]` | 파싱 실패한 페이지 번호 목록 |
+
+### ParseQuality
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `overallScore` | `number` | 0.0~1.0 종합 품질 점수 |
+| `textCharCount` | `integer` | 추출된 텍스트 총 문자 수 |
+| `tableCount` | `integer` | 추출된 표 수 |
+| `imageCount` | `integer` | 이미지 영역 수 |
+| `ocrPageCount` | `integer` | OCR 처리된 페이지 수 |
+| `dominantLanguage` | `string` | 지배적 언어 코드 |
+| `qualityWarnings` | `string[]` | 경고 메시지 목록 (예: `PAGE_3: 텍스트 없음`) |
+
+## 14. Debug Preview Response Schema
+
+### 목적
+
+`/api/documents/{versionId}/debug/preview` API 응답 포맷
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `format` | `DocumentFormat` | 포맷 |
+| `filename` | `string` | 파일명 |
+| `pageCount` | `integer` | 총 페이지 수 |
+| `parserMeta` | `ParserMeta` | 파서 정보 |
+| `quality` | `ParseQuality` | 파싱 품질 |
+| `pages` | `PageDebugView[]` | 페이지별 디버그 뷰 |
+
+### PageDebugView
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `pageNo` | `integer` | 페이지 번호 |
+| `pageTitle` | `string` | 제목 |
+| `bodyTexts` | `string[]` | 본문 |
+| `shapeTexts` | `string[]` | 도형 텍스트 |
+| `tables` | `string[][]` | 표 (행 × 열) |
+| `notes` | `string` | 발표자 노트 |
+| `ocrTexts` | `string[]` | OCR 결과 |
+| `imageCount` | `integer` | 이미지 수 |
+| `layoutHintCount` | `integer` | 레이아웃 힌트 수 |
+| `flags` | `ParseFlags` | 플래그 |
+| `markdownUrl` | `string` | 해당 페이지 마크다운 URL |

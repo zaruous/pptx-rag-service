@@ -40,12 +40,19 @@ erDiagram
         string source_file_name
         string source_hash
         string storage_path
+        string document_format
+        string parser_name
+        string parser_version
         int slide_count
         string document_summary
         string parse_status
         string embedding_status
         string embedding_model
         int embedding_dim
+        double parse_quality_score
+        string parse_quality_json
+        string debug_json_path
+        datetime debug_expires_at
     }
 
     category_taxonomy {
@@ -85,6 +92,11 @@ erDiagram
         string slide_title
         string thumbnail_path
         string summary_text
+        string parse_flags_json
+        boolean scan_detected
+        boolean table_approximate
+        boolean ocr_applied
+        boolean partial_parse_failed
     }
 
     slide_chunks {
@@ -147,3 +159,8 @@ erDiagram
 - `document_categories.source` 는 `USER_INPUT`, `LLM_SUGGEST`, `OPERATOR_REVIEW` 등으로 구분해 검수 흐름 추적.
 - `document_meta_chunks` 는 문서 단위 임베딩(`DOC_META`)을 별도 추적하여 슬라이드 chunk와 lifecycle을 분리한다.
 - `dashboard_snapshots.snapshot_type` 예: `CATEGORY_DISTRIBUTION`, `INGESTION_STATUS`, `UPLOAD_TIMELINE`, `RECENT_DOCUMENTS`.
+- `document_versions.document_format` 은 `PPTX`, `PDF`, `DOCX` 등 `DocumentFormat` enum 값.
+- `document_versions.debug_json_path` 는 파싱 결과 전체 JSON의 파일 저장소 경로. `debug_expires_at` 이후 자동 삭제.
+- `document_versions.parse_quality_score` 는 `ParseQuality.overallScore` (0.0~1.0).
+- `document_versions.parse_quality_json` 은 `ParseQuality` 전체 직렬화 (경고 목록 포함).
+- `slides.parse_flags_json` 은 `ParseFlags` 전체. `scan_detected`, `table_approximate`, `ocr_applied` 는 자주 쿼리되므로 별도 컬럼으로 분리.

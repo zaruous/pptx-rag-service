@@ -2,17 +2,25 @@
 
 ## 목표
 
-PPTX로부터 RAG의 기준 데이터가 될 정보를 최대한 안정적으로 추출한다. 특히 다음 두 종류를 구분한다.
+PPTX / PDF / DOCX 등 다양한 포맷의 문서로부터 RAG의 기준 데이터가 될 정보를 안정적으로 추출한다.  
+포맷에 상관없이 동일한 파이프라인이 작동하도록 `DocumentParser` 인터페이스로 추상화한다.  
+포맷별 추출 능력 차이와 한계는 `ParseFlags`와 `ParseQuality`로 명시하고 LLM 보강·검수 큐로 대응한다.  
+포맷별 상세 추출 능력 매트릭스와 파서 클래스 설계는 `20-document-format-support.md` 참고.  
+추출 결과 디버깅은 `21-extraction-debug-preview.md` 참고.
 
-- 일반 정보형 슬라이드: 개념, 설명, 표, 비교, 수치
-- 프로세스형 슬라이드: 워킹 프로세스, 승인 흐름, 부서 handoff, 예외 분기
+특히 다음 두 종류를 구분한다.
+
+- 일반 정보형 페이지: 개념, 설명, 표, 비교, 수치
+- 프로세스형 페이지: 워킹 프로세스, 승인 흐름, 부서 handoff, 예외 분기
 
 ## 핵심 원칙
 
-1. PPTX에서 먼저 구조적으로 추출하고, 그 다음 LLM이 의미를 정리한다.
-2. LLM 출력은 자유 문장보다 `JSON schema` 기반 구조화 출력을 우선한다.
-3. 원문 계층과 의미 계층을 같이 저장한다.
-4. 프로세스 슬라이드는 `요약`만으로 끝내지 않고 `graph`를 뽑아야 한다.
+1. 포맷별 파서(`DocumentParser` 구현체)가 먼저 구조적으로 `PageParseResult`를 만든다.
+2. 파이프라인 나머지 단계(IR 생성, LLM 추출, Chunk 조립)는 포맷을 모른다.
+3. LLM 출력은 자유 문장보다 `JSON schema` 기반 구조화 출력을 우선한다.
+4. 원문 계층과 의미 계층을 같이 저장한다.
+5. 프로세스 페이지는 `요약`만으로 끝내지 않고 `graph`를 뽑아야 한다.
+6. 추출 결과는 마크다운 디버그 뷰로 언제든 확인할 수 있어야 한다 (`/debug/preview`).
 
 ## 단계별 파이프라인
 
@@ -29,20 +37,40 @@ PPTX로부터 RAG의 기준 데이터가 될 정보를 최대한 안정적으로
 
 사용자가 카테고리를 일부만 지정했거나 자유 입력했을 경우, LLM 보조 정규화 단계에서 taxonomy 코드로 매핑한다.
 
-### 1. Deterministic Extraction
+### 1. Deterministic Extraction (포맷 독립)
 
-`Apache POI`와 보조 추출기로 다음 데이터를 모은다.
+`DocumentParserRegistry`에서 포맷에 맞는 `DocumentParser` 구현체를 찾아 실행한다.  
+파서는 `ParseContext`를 입력받아 `DocumentParseResult`(페이지 목록)를 반환한다.
 
-- slide title
+**포맷별 파서:**
+- PPTX → `PptxDocumentParser` (Apache POI XSLF)
+- PDF → `PdfDocumentParser` (Apache PDFBox 3.x + OCR)
+- DOCX → `DocxDocumentParser` (Apache POI XWPF)
+
+**공통 추출 항목 (모든 포맷):**
+- page title / heading
 - body text
-- shape text
-- table text
+- table text (셀 단위 평탄화)
+- image region metadata → OCR 연계
+- layout hints (좌표 / 순서)
+- hyperlinks
+
+**PPTX 추가 추출:**
+- shape text, SmartArt text
 - chart labels
-- notes text
-- image region metadata
-- slide element order
-- approximate layout position
-- 문서 전체 `slide_count`, 슬라이드별 텍스트 길이 합산
+- presenter notes
+- 정확한 EMU 좌표
+
+**PDF 제약:**
+- 도형/SmartArt 텍스트 불가 (OCR/멀티모달 보강 필요)
+- 표 구조 근사 (PDFBox 한계, `TABLE_APPROXIMATE` 플래그)
+- 스캔 PDF → 자동 OCR 전환
+
+**DOCX 제약:**
+- 페이지 번호는 섹션 기반 (실제 페이지 분할은 LibreOffice 옵션)
+- 제목은 Heading 스타일 기반, 없으면 폰트 크기 휴리스틱
+
+문서 전체 `page_count`와 `ParseQuality`는 파서 반환 즉시 RDB에 저장한다.
 
 ### 2. Visual Enrichment
 
@@ -54,7 +82,13 @@ PPTX로부터 RAG의 기준 데이터가 될 정보를 최대한 안정적으로
 
 ### 3. Intermediate Representation 생성
 
-슬라이드별 원천 데이터를 통합한 `slide IR`을 만든다.
+`PageParseResult`를 `SlideIr`(포맷 무관한 공통 중간 표현)으로 변환한다.  
+이 단계부터는 포맷 구분 없이 동일한 파이프라인이 동작한다.
+
+**포맷별 변환 주의:**
+- PDF의 `TABLE_APPROXIMATE` 플래그가 있으면 IR의 `tableTexts`에 `[근사 추출]` 마킹
+- `SCAN_DETECTED`이면 IR의 `bodyTexts` 대부분이 `ocrTexts`에서 온다고 표시
+- DOCX의 섹션 기반 페이지는 `pageNo`를 섹션 순번으로 채움
 
 ### 4. LLM Semantic Extraction
 
@@ -210,14 +244,20 @@ LLM은 `slide IR`를 입력받아 다음을 생성한다.
 
 ## 구현 권장 사항
 
-- `SlideIrBuilder`
+- `DocumentParser` (인터페이스)
+- `DocumentParserRegistry` (포맷 → 파서 매핑)
+- `PptxDocumentParser`, `PdfDocumentParser`, `DocxDocumentParser`
+- `DocumentFormatDetector` (확장자 + MIME + 매직 바이트)
+- `SlideIrBuilder` (PageParseResult → SlideIr 변환)
 - `VisualTypeClassifier`
 - `SlideSemanticExtractor`
 - `DocumentSemanticExtractor` (문서 단위 요약/카테고리 후보)
-- `CategoryNormalizer` (사용자 입력 + LLM 후보 → taxonomy 코드)
+- `CategoryNormalizer`
 - `WorkflowExtractor`
 - `ChunkAssembler` (DOC_META 포함)
 - `EmbeddingClient` (`bge-m3` 어댑터)
 - `RetrievalReranker`
+- `DebugPreviewRenderer` (PageParseResult → 마크다운 변환)
 
-위 모듈을 분리하면 나중에 OCR 엔진이나 LLM 모델을 바꿔도 파이프라인 수정 범위가 작다.
+포맷 추가 시 `DocumentParser` 구현체만 추가하면 나머지 파이프라인은 수정 불필요.  
+OCR 엔진·LLM 모델 교체도 각 어댑터만 변경하면 된다.
