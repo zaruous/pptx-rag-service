@@ -25,6 +25,7 @@
 10. `19-dashboard-design.md`
 11. `20-document-format-support.md`
 12. `21-extraction-debug-preview.md`
+13. `22-document-md-conversion-strategy.md`
 11. `db-design/`
 12. `06-erd.md`
 13. `api-design/`
@@ -52,6 +53,7 @@
 - 대시보드 인포그래픽 설계: `19-dashboard-design.md`
 - 문서 포맷 지원 (PPTX/PDF/DOCX): `20-document-format-support.md`
 - 추출 결과 디버그 미리보기: `21-extraction-debug-preview.md`
+- 논문 수준 MD 변환 전략·라이브러리·하드웨어: `22-document-md-conversion-strategy.md`
 - 화면 설계: `screen-design/`
 - 데이터 설계: `db-design/`
 - ERD: `06-erd.md`
