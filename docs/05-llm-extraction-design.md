@@ -187,6 +187,17 @@ LLM 출력의 각 fact나 step은 가능하면 원천 텍스트 참조를 가진
 
 ## 적재 정책
 
+### Document Meta Chunk
+
+- 문서 버전당 1개
+- 임베딩 텍스트는 다음 항목을 줄바꿈으로 합쳐 구성
+  - `documentName`
+  - `totalSlideCount`
+  - `documentSummary`
+  - `categoryFunctionLabels`, `categoryIndustryLabels`, `categoryDocTypeLabel`
+  - `documentKeywords`
+- 검색 시 `chunkType = DOC_META` 필터로 우선 매칭하고, 발견형/카테고리 질의에 사용
+
 ### Summary Chunk
 
 - `summary` 그대로 적재
@@ -204,12 +215,64 @@ LLM 출력의 각 fact나 step은 가능하면 원천 텍스트 참조를 가진
   - `주문 접수 다음 단계는 생산 계획이다`
   - `품질 검사가 합격이면 출하 승인으로 진행된다`
 
+## 문서 단위 LLM 추출
+
+슬라이드 단위 추출이 끝난 후, 문서 전체 컨텍스트에 대해 한 번 더 LLM을 호출한다.
+
+### 입력
+
+- 사용자가 업로드 시 지정한 `userCategories` (function/industry/docType)
+- 슬라이드별 `slideType`, `summary`, `keywords` 모음
+- 문서명, 총 페이지 수
+
+### 출력
+
+```json
+{
+  "documentSummary": "주문 접수부터 출하 승인까지의 단계와 품질 검사 분기 조건을 정리한 업무 매뉴얼.",
+  "documentKeywords": ["출하 승인", "품질 검사", "재작업"],
+  "suggestedCategories": {
+    "function": ["QUALITY_MANAGEMENT", "SHIPPING_MANAGEMENT"],
+    "industry": ["MANUFACTURING"],
+    "docType": "OPERATION_MANUAL"
+  },
+  "categoryConfidence": {
+    "function": 0.86,
+    "industry": 0.91,
+    "docType": 0.78
+  },
+  "languageMix": {"ko": 0.92, "en": 0.08}
+}
+```
+
+### 적재 규칙
+
+- `userCategories`와 `suggestedCategories`를 비교
+- 불일치/누락 항목은 `category_review` 큐로 적재
+- 운영자가 승인 후에 정식 카테고리로 확정
+- 카테고리는 `document_categories` 테이블에 매핑되며, 이후 모든 chunk 메타에 복제된다
+
+## 임베딩 모델 고정
+
+| 항목 | 값 |
+|---|---|
+| 모델 | `BAAI/bge-m3` |
+| 차원 | 1024 |
+| 거리 | cosine |
+| 입력 길이 제한 | 8192 token |
+| 정규화 | L2 normalize |
+| 운영 위치 | 내부 추론 서버 또는 HuggingFace TEI |
+
+LLM 출력은 영향 받지 않지만, chunk 텍스트는 모두 `bge-m3` 토크나이저 기준으로 잘라서 적재한다.
+
 ## 운영 버전 관리
 
 - `prompt_version`
 - `schema_version`
-- `model_name`
+- `model_name` (LLM)
 - `model_revision`
+- `embedding_model = bge-m3`
+- `embedding_revision`
 
 위 값을 `document_version` 또는 `ingestion_job`과 함께 기록해야 재처리 기준이 선다.
 

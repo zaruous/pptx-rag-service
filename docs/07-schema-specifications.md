@@ -40,6 +40,7 @@
 
 #### ChunkType
 
+- `DOC_META`
 - `RAW`
 - `SUMMARY`
 - `FACT`
@@ -48,6 +49,18 @@
 - `WORKFLOW_EXCEPTION`
 - `OCR`
 - `NOTE`
+
+#### CategoryAxis
+
+- `FUNCTION`
+- `INDUSTRY`
+- `DOC_TYPE`
+
+#### CategorySource
+
+- `USER_INPUT`
+- `LLM_SUGGEST`
+- `OPERATOR_REVIEW`
 
 #### QueryType
 
@@ -216,18 +229,27 @@ Chroma 적재 전 최종 청크 공통 포맷
 | `documentId` | `string` | Y | 문서 ID |
 | `documentVersionId` | `string` | Y | 버전 ID |
 | `documentName` | `string` | Y | 문서명 |
-| `slideId` | `string` | Y | 슬라이드 ID |
-| `slideNo` | `integer` | Y | 슬라이드 번호 |
+| `totalSlideCount` | `integer` | Y | 문서 전체 페이지 수 |
+| `slideId` | `string` | N | 슬라이드 ID (`DOC_META`는 null) |
+| `slideNo` | `integer` | Y | 슬라이드 번호 (`DOC_META`는 0) |
 | `chunkId` | `string` | Y | 청크 ID |
 | `chunkType` | `ChunkType` | Y | 청크 유형 |
-| `slideType` | `SlideType` | Y | 슬라이드 유형 |
+| `slideType` | `SlideType` | N | 슬라이드 유형 (`DOC_META`는 null) |
+| `categoryFunction` | `string` | N | 기능 코드 join 문자열 (`A|B`) |
+| `categoryIndustry` | `string` | N | 업종 코드 join 문자열 |
+| `categoryDocType` | `string` | N | 문서 유형 코드 |
+| `categoryLabels` | `string` | N | 한글/영문 라벨 join 문자열 |
 | `language` | `string` | N | 언어 |
 | `sourceHash` | `string` | Y | 파일 해시 |
 | `confidence` | `number` | N | 청크 신뢰도 |
 | `reviewStatus` | `ReviewStatus` | Y | 검수 상태 |
+| `embeddingModel` | `string` | Y | `bge-m3` |
+| `embeddingDim` | `integer` | Y | 1024 |
 | `promptVersion` | `string` | N | 프롬프트 버전 |
 | `schemaVersion` | `string` | N | 스키마 버전 |
-| `modelName` | `string` | N | 모델명 |
+| `modelName` | `string` | N | LLM 모델명 |
+
+> Chroma 메타 필드는 스칼라(`str`, `int`, `float`, `bool`)만 안전하므로 다중 카테고리는 구분자(`|`) join 또는 별도 boolean flag로 평탄화한다.
 
 ## 6. Query Classification Result Schema
 
@@ -297,6 +319,60 @@ Chroma 적재 전 최종 청크 공통 포맷
 - `schemaVersion`
 - `modelName`
 - `modelRevision`
+- `embeddingModel` (`bge-m3`)
+- `embeddingRevision`
 - `ingestionPolicyVersion`
+- `categoryTaxonomyVersion`
 
 이 값들은 같은 PPTX라도 재처리 기준을 바꾸는 핵심이므로 누락되면 안 된다.
+
+## 11. Document Upload Request Schema
+
+### 목적
+
+업로드 API 입력 표준화. 카테고리는 사용자가 선택한 값을 그대로 전달.
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `workspaceId` | `string` | Y | 검색 범위 |
+| `documentName` | `string` | Y | 사용자가 부여한 문서명. 기본은 파일명 |
+| `file` | `multipart` | Y | PPTX 바이너리 |
+| `categoryFunctionCodes` | `string[]` | N | 기능 코드 다중 선택 |
+| `categoryIndustryCodes` | `string[]` | N | 업종 코드 다중 선택 |
+| `categoryDocTypeCode` | `string` | N | 문서 유형 단일 선택 |
+| `freeTags` | `string[]` | N | taxonomy 미존재 자유 태그. LLM이 정규화 |
+| `enableOcr` | `boolean` | N | OCR 보강 여부 |
+
+### 응답
+
+```json
+{
+  "documentId": "doc-1234",
+  "documentVersionId": "ver-1",
+  "jobId": "job-987",
+  "categories": {
+    "function": [{"code": "QUALITY_MANAGEMENT", "label": "품질관리", "source": "USER_INPUT"}],
+    "industry": [{"code": "MANUFACTURING", "label": "제조", "source": "USER_INPUT"}],
+    "docType": {"code": "OPERATION_MANUAL", "label": "업무매뉴얼", "source": "USER_INPUT"}
+  }
+}
+```
+
+## 12. Document Meta Chunk Schema
+
+### 목적
+
+문서 단위 임베딩 (`DOC_META`) 생성에 사용하는 표준 입력
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `documentVersionId` | `string` | Y | 버전 ID |
+| `documentName` | `string` | Y | 파일명 |
+| `totalSlideCount` | `integer` | Y | 페이지 수 |
+| `documentSummary` | `string` | Y | LLM 생성 문서 요약 |
+| `documentKeywords` | `string[]` | Y | 키워드 |
+| `categoryFunctionLabels` | `string[]` | Y | 기능 라벨 |
+| `categoryIndustryLabels` | `string[]` | Y | 업종 라벨 |
+| `categoryDocTypeLabel` | `string` | N | 문서 유형 라벨 |
+| `composedText` | `string` | Y | 임베딩 입력으로 합성된 텍스트 |
+| `embeddingModel` | `string` | Y | `bge-m3` |

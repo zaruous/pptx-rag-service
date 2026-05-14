@@ -16,6 +16,19 @@ PPTX로부터 RAG의 기준 데이터가 될 정보를 최대한 안정적으로
 
 ## 단계별 파이프라인
 
+### 0. Upload-time Metadata Capture
+
+업로드 시점에 사용자/시스템이 다음을 수집한다.
+
+- `documentName` (원본 파일명)
+- `categoryFunction` (기능, 다중 선택 가능)
+- `categoryIndustry` (업종, 다중 선택 가능)
+- `categoryDocType` (문서 유형, 단일 선택 권장)
+- `uploaderId`, `workspaceId`
+- 파일 해시, 파일 크기
+
+사용자가 카테고리를 일부만 지정했거나 자유 입력했을 경우, LLM 보조 정규화 단계에서 taxonomy 코드로 매핑한다.
+
 ### 1. Deterministic Extraction
 
 `Apache POI`와 보조 추출기로 다음 데이터를 모은다.
@@ -29,6 +42,7 @@ PPTX로부터 RAG의 기준 데이터가 될 정보를 최대한 안정적으로
 - image region metadata
 - slide element order
 - approximate layout position
+- 문서 전체 `slide_count`, 슬라이드별 텍스트 길이 합산
 
 ### 2. Visual Enrichment
 
@@ -52,9 +66,29 @@ LLM은 `slide IR`를 입력받아 다음을 생성한다.
 - workflow graph
 - confidence
 
+### 4-1. LLM Document-Level Extraction
+
+슬라이드별 추출이 끝나면, 문서 전체 단위로 LLM이 다음을 한 번 더 생성한다.
+
+- `documentSummary` (문서 전체를 1~3문장으로 요약)
+- `documentKeywords` (전 슬라이드 키워드 정리)
+- `suggestedCategories` (taxonomy 코드 후보)
+- `documentLanguageMix` (한국어/영어 비중 등)
+
+이 출력은 사용자가 업로드 시 지정한 카테고리와 비교해 누락/충돌을 검수 큐로 보낸다.
+
 ### 5. Retrieval Chunk Assembly
 
-최종적으로 `raw`, `summary`, `fact`, `workflow` 계층 chunk를 만든다.
+최종적으로 다음 계층 chunk를 만든다.
+
+- `DOC_META`: 문서 단위 메타 chunk (파일명 + 페이지수 + 문서 요약 + 카테고리 라벨 + 키워드)
+- `SUMMARY`: 슬라이드 요약 chunk
+- `FACT`: 슬라이드 fact chunk
+- `RAW`: 원문 chunk
+- `WORKFLOW_*`: workflow step/edge/exception chunk
+- `OCR`, `NOTE`: 부가 chunk
+
+모든 chunk는 `bge-m3`로 임베딩하고, `embedding_model = bge-m3`, `embedding_dim = 1024` 메타를 함께 기록한다.
 
 ## Slide Intermediate Representation 예시
 
@@ -126,6 +160,15 @@ LLM은 `slide IR`를 입력받아 다음을 생성한다.
 
 ## Chroma 적재 전략
 
+### 0. Document Meta Chunk (`DOC_META`)
+
+- 문서 버전당 1개
+- 임베딩 텍스트 예시:
+  - `파일명: 2024_출하프로세스_v3.pptx`
+  - `총 24장 / 카테고리: 기능=품질관리,출하관리 / 업종=제조 / 유형=업무매뉴얼`
+  - `문서 요약: 주문 접수부터 출하 승인까지의 단계와 품질 검사 분기 조건을 정리한다.`
+- 용도: `이 회사에 출하 프로세스 관련 문서 있나?` 같은 문서 발견형 질의, 카테고리 검색
+
 ### 1. Raw Chunk
 
 - 원문 근거 보존용
@@ -170,8 +213,11 @@ LLM은 `slide IR`를 입력받아 다음을 생성한다.
 - `SlideIrBuilder`
 - `VisualTypeClassifier`
 - `SlideSemanticExtractor`
+- `DocumentSemanticExtractor` (문서 단위 요약/카테고리 후보)
+- `CategoryNormalizer` (사용자 입력 + LLM 후보 → taxonomy 코드)
 - `WorkflowExtractor`
-- `ChunkAssembler`
+- `ChunkAssembler` (DOC_META 포함)
+- `EmbeddingClient` (`bge-m3` 어댑터)
 - `RetrievalReranker`
 
 위 모듈을 분리하면 나중에 OCR 엔진이나 LLM 모델을 바꿔도 파이프라인 수정 범위가 작다.
